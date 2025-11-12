@@ -1,0 +1,13 @@
+{
+  "type": "module",
+  "dependencies": {
+    "@extractus/article-extractor": "^8.0.20",
+    "@huggingface/inference": "^4.13.2",
+    "axios": "^1.13.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "pdfjs-dist": "^5.4.394"
+  }
+}
