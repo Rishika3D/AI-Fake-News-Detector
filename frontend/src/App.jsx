@@ -1,15 +1,13 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
-import InsertData from './components/InsertData'
+import React from "react";
+import InsertData from './components/InsertData.jsx'
+import "./App.css";
 
 function App() {
-  const [count, setCount] = useState(0)
-
   return (
-    <InsertData/>
-  )
+    <div className="min-h-screen bg-background text-foreground">
+      <InsertData />
+    </div>
+  );
 }
 
-export default App
+export default App;
