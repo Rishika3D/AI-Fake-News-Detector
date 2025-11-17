@@ -2,8 +2,19 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import analyzeRoutes from './routes/analyzeRoutes.js'
+import pg from 'pg'
 
-
+export const db = new pg.Client({
+    user: process.env.PGUSER,
+    host: process.env.PGHOST || "localhost",
+    database: process.env.PGDATABASE,
+    password: process.env.PGPASSWORD,
+    port: process.env.PGPORT || 5432,
+  });
+  
+  db.connect()
+    .then(() => console.log("📦 Connected to PostgreSQL"))
+    .catch((err) => console.error("❌ DB Connection Error:", err));
 dotenv.config();
 
 const app = express();
