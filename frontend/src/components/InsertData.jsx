@@ -1,56 +1,86 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Shield } from "lucide-react";
+import { Shield, AlertCircle, CheckCircle } from "lucide-react";
 
 const InsertData = () => {
   const [mode, setMode] = useState("url");
   const [url, setUrl] = useState("");
   const [pdf, setPdf] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null); // New state for storing results
 
   /* ------------------------------ */
-  /*   HOLOGRAPHIC CURSOR GLOW     */
+  /* HOLOGRAPHIC CURSOR GLOW     */
   /* ------------------------------ */
   useEffect(() => {
     const holo = document.getElementById("holo-light");
     if (!holo) return;
-
     const move = (e) => {
       holo.style.left = `${e.clientX}px`;
       holo.style.top = `${e.clientY}px`;
       holo.style.transform = `translate(-50%, -50%)`;
     };
-
     window.addEventListener("mousemove", move);
     return () => window.removeEventListener("mousemove", move);
   }, []);
 
   /* ------------------------------ */
-  /*   ANALYZE HANDLER (MOCK)       */
+  /* ANALYZE HANDLER (REAL)       */
   /* ------------------------------ */
   const handleAnalyse = async () => {
+    setResult(null); // Reset previous results
+
     if (mode === "url" && !url.trim()) return alert("Enter a valid URL");
     if (mode === "pdf" && !pdf) return alert("Upload a PDF");
 
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 1000));
-    setLoading(false);
+
+    try {
+      let response;
+      
+      if (mode === "url") {
+        // Call URL Endpoint
+        response = await fetch("http://localhost:5000/api/analyze-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+      } else {
+        // Call PDF Endpoint (Requires FormData)
+        const formData = new FormData();
+        formData.append("pdf", pdf);
+        
+        response = await fetch("http://localhost:5000/api/analyze-pdf", {
+          method: "POST",
+          body: formData,
+        });
+      }
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Something went wrong");
+      }
+
+      setResult(data); // Save the result from backend
+    } catch (error) {
+      console.error(error);
+      alert("Error analyzing: " + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="relative min-h-screen flex items-center justify-center px-4">
-
-      {/* 🔮 HOLOGRAM LAYER */}
       <div id="holo-light" className="holo-light"></div>
 
-      {/* 🌟 MAIN CARD */}
       <motion.div
         initial={{ opacity: 0, y: 25 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
         className="w-full max-w-xl relative z-[10]"
       >
-        {/* Header */}
         <div className="text-center mb-12">
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
@@ -60,7 +90,6 @@ const InsertData = () => {
           >
             <Shield className="size-10 text-white" />
           </motion.div>
-
           <h1 className="text-4xl font-medium tracking-tight mt-4">
             Fake News Detector
           </h1>
@@ -69,7 +98,6 @@ const InsertData = () => {
           </p>
         </div>
 
-        {/* Card */}
         <motion.div
           initial={{ opacity: 0, scale: 0.96 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -82,28 +110,21 @@ const InsertData = () => {
               className={`flex-1 py-2 rounded-md text-sm font-medium transition ${
                 mode === "url" ? "bg-card shadow text-foreground" : "text-muted-foreground"
               }`}
-              onClick={() => {
-                setMode("url");
-                setPdf(null);
-              }}
+              onClick={() => { setMode("url"); setPdf(null); setResult(null); }}
             >
               URL
             </button>
-
             <button
               className={`flex-1 py-2 rounded-md text-sm font-medium transition ${
                 mode === "pdf" ? "bg-card shadow text-foreground" : "text-muted-foreground"
               }`}
-              onClick={() => {
-                setMode("pdf");
-                setUrl("");
-              }}
+              onClick={() => { setMode("pdf"); setUrl(""); setResult(null); }}
             >
               PDF
             </button>
           </div>
 
-          {/* Input */}
+          {/* Inputs */}
           <div className="flex flex-col gap-3 mb-6">
             {mode === "url" ? (
               <>
@@ -132,10 +153,38 @@ const InsertData = () => {
           {/* Analyze Button */}
           <button
             onClick={handleAnalyse}
-            className="w-full bg-primary text-primary-foreground py-3 rounded-lg text-base font-medium hover:opacity-90 transition"
+            disabled={loading}
+            className="w-full bg-primary text-primary-foreground py-3 rounded-lg text-base font-medium hover:opacity-90 transition disabled:opacity-50"
           >
             {loading ? "Analyzing..." : "Analyze"}
           </button>
+
+          {/* --- NEW: RESULT DISPLAY --- */}
+          {result && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`mt-6 p-4 rounded-lg border flex items-start gap-3 ${
+                result.label === "REAL" || result.label === "LABEL_1" 
+                  ? "bg-green-500/10 border-green-500/20 text-green-700" 
+                  : "bg-red-500/10 border-red-500/20 text-red-700"
+              }`}
+            >
+              {result.label === "REAL" || result.label === "LABEL_1" ? (
+                <CheckCircle className="size-6 shrink-0" />
+              ) : (
+                <AlertCircle className="size-6 shrink-0" />
+              )}
+              <div>
+                <h3 className="font-bold text-lg">
+                  {result.label === "LABEL_1" ? "Real News" : "Fake News"}
+                </h3>
+                <p className="text-sm opacity-90">
+                  Confidence Score: { (result.confidence * 100).toFixed(2) }%
+                </p>
+              </div>
+            </motion.div>
+          )}
         </motion.div>
       </motion.div>
     </div>
