@@ -4,56 +4,75 @@ import { extractTextFromLink } from "./textExtractor.js";
 import { exportTextFromPdf } from "./pdfService.js";
 
 dotenv.config();
-if (!process.env.HF_TOKEN) {
-  console.error("HF_TOKEN environment variable is not set!");
-  process.exit(1);
-}
+
 const client = new InferenceClient(process.env.HF_TOKEN);
 
 const MODEL_NAME = "mrm8488/bert-tiny-finetuned-fake-news-detection";
 const PROVIDER = "hf-inference";
-
-// THE FIX: Lowered from 1000 to 700 to be safely under the 512 token limit
 const MAX_INPUT_CHARS = 700;
 
-// --- Private Helper Function ---
-async function _performClassification(inputText) {
-  if (!inputText || inputText.trim().length === 0) {
-    throw new Error("Input text is empty or could not be extracted.");
-  }
-  const truncatedText = inputText.substring(0, MAX_INPUT_CHARS);
+/* ===== PRIVATE ===== */
+async function performClassification(text) {
+  const truncated = text.slice(0, MAX_INPUT_CHARS);
 
   const result = await client.textClassification({
     model: MODEL_NAME,
-    inputs: truncatedText, 
-    provider: PROVIDER,
+    inputs: truncated,
+    provider: PROVIDER
   });
 
-  if (!result || result.length === 0) {
-    throw new Error("Received invalid response from classification API.");
-  }
-
-  const top = result[0];
-  console.log(`Label: ${top.label}, Confidence: ${(top.score * 100).toFixed(2)}%`);
-  return { label: top.label, confidence: top.score };
+  return {
+    label: result[0].label,
+    confidence: result[0].score
+  };
 }
 
-export async function classifyFromPdf(filepath) {
-  try {
-    const text = await exportTextFromPdf(filepath);
-    return await _performClassification(text);
-  } catch (error) {
-    console.error(`Failed to classify PDF (${filepath}):`, error.message);
-    return null;
-  }
-}
-
+/* ===== LINK ===== */
 export async function classifyFromLink(url) {
   try {
     const text = await extractTextFromLink(url);
-    return await _performClassification(text);
-  } catch (error) {
-    console.error(`Failed to classify link (${url}):`, error.message);
+
+    if (!text || text.trim().length === 0) {
+      return {
+        success: false,
+        reason: "EMPTY_CONTENT",
+        error: "No readable text found on webpage."
+      };
+    }
+
+    const result = await performClassification(text);
+
+    return {
+      success: true,
+      label: result.label,
+      confidence: result.confidence
+    };
+
+  } catch (err) {
+    const msg = err.message.toLowerCase();
+
+    if (msg.includes("403") || msg.includes("blocked")) {
+      return {
+        success: false,
+        reason: "BLOCKED_BY_WEBSITE",
+        error: "This website blocks automated access."
+      };
+    }
+
+    return {
+      success: false,
+      reason: "FETCH_FAILED",
+      error: err.message
+    };
+  }
+}
+
+/* ===== PDF ===== */
+export async function classifyFromPdf(path) {
+  try {
+    const text = await exportTextFromPdf(path);
+    return await performClassification(text);
+  } catch {
     return null;
   }
 }

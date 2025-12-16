@@ -1,6 +1,6 @@
 import express from "express";
 import multer from "multer";
-import { analyzeUrl, analyzePdf } from "../controllers/analyzeController.js";
+import { analyzeUrl, analyzePdf } from "../controllers/analyzeControllers.js";
 
 const router = express.Router();
 const upload = multer({ dest: "uploads/" });
