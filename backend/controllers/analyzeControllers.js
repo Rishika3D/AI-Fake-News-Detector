@@ -4,7 +4,7 @@ import { classifyFromLink, classifyFromPdf } from "../services/huggingFaceServic
 // ------------------- URL ANALYSIS -------------------
 export const analyzeUrl = async (req, res) => {
   try {
-    const { url } = req.body;
+    const url = req.body.url || req.query.url;
 
     if (!url) {
       return res.status(400).json({ error: "URL is required." });

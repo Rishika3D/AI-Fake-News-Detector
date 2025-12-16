@@ -4,9 +4,11 @@
     "@extractus/article-extractor": "^8.0.20",
     "@huggingface/inference": "^4.13.2",
     "axios": "^1.13.2",
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.3",
     "multer": "^2.0.2",
     "pdfjs-dist": "^5.4.394",
     "pg": "^8.16.3"
