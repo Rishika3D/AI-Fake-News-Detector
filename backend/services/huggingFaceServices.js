@@ -1,25 +1,29 @@
+import { Client } from "@gradio/client"; 
 import dotenv from "dotenv";
-import { Client } from "@gradio/client"; // 👈 Import the official client
 import { extractTextFromLink } from "./textExtractor.js";
 import { exportTextFromPdf } from "./pdfService.js";
 
 dotenv.config();
 
+// ✅ YOUR CUSTOM MODEL
+const SPACE_ID = "Rishika08/fake-news-detector";
+
 /* ================= HELPERS ================= */
 
 /**
- * Maps the AI's raw label to a human-readable category.
- * BASED ON YOUR TESTING:
+ * MAPPING BASED ON YOUR TEST RESULTS:
  * LABEL_0 = Real
  * LABEL_1 = Fake
  */
 function mapLabelToCategory(label) {
   const normalized = label?.toString().toUpperCase() || "";
   
+  // Check for Real (LABEL_0)
   if (normalized.includes("LABEL_0") || normalized === "0") {
     return "Real";
   }
   
+  // Check for Fake (LABEL_1)
   if (normalized.includes("LABEL_1") || normalized === "1") {
     return "Fake";
   }
@@ -28,79 +32,68 @@ function mapLabelToCategory(label) {
 }
 
 /**
- * CONNECT AND PREDICT USING THE OFFICIAL CLIENT
- * This handles "Waking up", "Queueing", and "API Versions" automatically.
+ * CONNECT TO YOUR SPACE
  */
-async function querySpace(text) {
+async function queryMySpace(text) {
   try {
-    console.log("📡 Connecting to Hugging Face Space...");
+    console.log(`📡 Connecting to your Space: ${SPACE_ID}...`);
     
-    // 1. Connect to your Space
-    // The client will automatically handle the URL and connection logic
-    const client = await Client.connect("Rishika08/fake-news-detector");
+    // 1. Connect to your custom Space
+    const client = await Client.connect(SPACE_ID);
 
-    // 2. Send the data
-    // We send the text to the "/predict" endpoint defined in your app.py
-    const result = await client.predict("/predict", { 
-      text: text.slice(0, 1500) // Truncate to be safe
-    });
+    // 2. Send the text to your app's "/predict" endpoint
+    // We truncate to 1500 chars to fit the model's window
+    const result = await client.predict("/predict", [ text.slice(0, 1500) ]);
 
-    // 3. Extract the result
-    // The client returns an object like: { data: [ { label: 'LABEL_1', score: 0.99 } ] }
-    const prediction = result.data[0];
+    // 3. Extract Result
+    // Gradio returns: { data: [ { label: 'LABEL_0', score: 0.99 } ] }
+    const prediction = result.data[0]; 
     return prediction;
 
   } catch (error) {
-    console.error("❌ AI Service Error:", error.message);
-    throw new Error(`AI Model Error: ${error.message}`);
+    console.error("❌ Space Error:", error.message);
+    throw new Error(`Failed to connect to your AI model. Is the Space running? Error: ${error.message}`);
   }
 }
 
 /* ================= EXPORTED FUNCTIONS ================= */
 
-// 1. Analyze a URL
 export async function classifyFromLink(url) {
   try {
-    console.log(`📄 Extracting text from: ${url}`);
+    console.log(`🔎 Scraping URL: ${url}`);
+    
+    // 🛡️ 1. SAFETY CHECK: Whitelist Trusted Domains
+    // If the URL is from a known reliable source, don't waste AI resources (and risk error)
+    const trustedDomains = ["bbc.com", "reuters.com", "nytimes.com", "wikipedia.org", "cnn.com"];
+    
+    // Check if the URL contains any trusted domain
+    if (trustedDomains.some(domain => url.includes(domain))) {
+        console.log("🔒 Whitelist: Trusted Source Detected");
+        // We still scrape to get the snippet for the UI, but we force the label to "Real"
+        const text = await extractTextFromLink(url);
+        return { 
+           success: true, 
+           label: "Real", 
+           confidence: 1.0, // 100% confidence
+           snippet: text ? text.slice(0, 200) + "..." : "Trusted Source Content"
+        };
+    }
+
+    // 2. SCRAPE & PREDICT (For everything else)
     const text = await extractTextFromLink(url);
 
     if (!text || text.trim().length < 50) {
-      return { 
-        success: false, 
-        error: "Webpage content was empty or unreadable (too short)." 
-      };
+      return { success: false, error: "Webpage content was empty or unreadable." };
     }
 
-    const result = await querySpace(text);
+    console.log(`🧠 Sending to AI model...`);
+    const result = await queryMySpace(text);
 
     return {
       success: true,
       label: mapLabelToCategory(result.label),
       confidence: result.score,
-      snippet: text.slice(0, 150) + "..." 
-    };
-
-  } catch (err) {
-    return { 
-      success: false, 
-      error: `Analysis failed: ${err.message}` 
-    };
-  }
-}
-
-// 2. Analyze Raw Text
-export async function classifyText(text) {
-  try {
-    if (!text || text.trim().length < 20) {
-      return { success: false, error: "Text is too short to analyze." };
-    }
-
-    const result = await querySpace(text);
-
-    return {
-      success: true,
-      label: mapLabelToCategory(result.label),
-      confidence: result.score
+      snippet: text.slice(0, 200) + "..." 
     };
 
   } catch (err) {
@@ -108,22 +101,22 @@ export async function classifyText(text) {
   }
 }
 
-// 3. Analyze PDF
 export async function classifyFromPdf(path) {
   try {
-    console.log(`📂 Processing PDF at: ${path}`);
+    console.log(`📂 Processing PDF: ${path}`);
     const text = await exportTextFromPdf(path);
     
     if (!text || text.length < 50) {
-       return { success: false, error: "PDF text could not be extracted or is too short." };
+       return { success: false, error: "PDF text too short." };
     }
 
-    const result = await querySpace(text);
+    const result = await queryMySpace(text);
     
     return {
       success: true,
       label: mapLabelToCategory(result.label),
-      confidence: result.score
+      confidence: result.score,
+      snippet: text.slice(0, 200) + "..."
     };
   } catch (err) {
     return { success: false, error: err.message };

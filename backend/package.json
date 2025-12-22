@@ -2,7 +2,7 @@
   "type": "module",
   "dependencies": {
     "@extractus/article-extractor": "^8.0.20",
-    "@huggingface/inference": "^4.13.2",
+    "@huggingface/inference": "^4.13.5",
     "axios": "^1.13.2",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
