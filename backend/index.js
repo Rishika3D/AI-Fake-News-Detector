@@ -22,7 +22,7 @@ db.connect()
 
 /* ================= APP ================= */
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5050;
 
 app.use(cors({
   origin: "http://localhost:5173",

@@ -1,133 +1,130 @@
-import { InferenceClient } from "@huggingface/inference";
 import dotenv from "dotenv";
+import { Client } from "@gradio/client"; // 👈 Import the official client
 import { extractTextFromLink } from "./textExtractor.js";
 import { exportTextFromPdf } from "./pdfService.js";
 
 dotenv.config();
 
-// Initialize Client with your Write Token
-const client = new InferenceClient(process.env.HF_ACCESS_TOKEN);
+/* ================= HELPERS ================= */
 
-// 🚀 YOUR MODEL (99% Accuracy)
-const MODEL_NAME = "Rishika08/deberta-v3-welfake-99-acc";
-
-// DeBERTa can handle 512 tokens (approx 1500-2000 chars). 
-// Let's use 1500 to give it maximum context without breaking the limit.
-const MAX_INPUT_CHARS = 1500; 
-
-/* ===== HELPERS ===== */
-
-// 0 = Fake, 1 = Real (Based on WELFake dataset training)
+/**
+ * Maps the AI's raw label to a human-readable category.
+ * BASED ON YOUR TESTING:
+ * LABEL_0 = Real
+ * LABEL_1 = Fake
+ */
 function mapLabelToCategory(label) {
-  const normalized = label.toUpperCase();
+  const normalized = label?.toString().toUpperCase() || "";
   
-  // DeBERTa outputs "LABEL_0" (Fake) or "LABEL_1" (Real)
-  if (normalized === "LABEL_0" || normalized === "0") return "Fake";
-  if (normalized === "LABEL_1" || normalized === "1") return "Real";
+  if (normalized.includes("LABEL_0") || normalized === "0") {
+    return "Real";
+  }
+  
+  if (normalized.includes("LABEL_1") || normalized === "1") {
+    return "Fake";
+  }
   
   return "Uncertain";
 }
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * CONNECT AND PREDICT USING THE OFFICIAL CLIENT
+ * This handles "Waking up", "Queueing", and "API Versions" automatically.
+ */
+async function querySpace(text) {
+  try {
+    console.log("📡 Connecting to Hugging Face Space...");
+    
+    // 1. Connect to your Space
+    // The client will automatically handle the URL and connection logic
+    const client = await Client.connect("Rishika08/fake-news-detector");
 
-/* ===== CORE CLASSIFICATION ===== */
-async function performClassification(text) {
-  // Truncate text to fit model context window
-  const truncated = text.slice(0, MAX_INPUT_CHARS);
-  
-  let attempts = 0;
-  const maxAttempts = 5; 
+    // 2. Send the data
+    // We send the text to the "/predict" endpoint defined in your app.py
+    const result = await client.predict("/predict", { 
+      text: text.slice(0, 1500) // Truncate to be safe
+    });
 
-  while (attempts < maxAttempts) {
-    try {
-      console.log(`🤖 Asking AI (Attempt ${attempts + 1})...`);
-      
-      const result = await client.textClassification({
-        model: MODEL_NAME,
-        inputs: truncated,
-      });
+    // 3. Extract the result
+    // The client returns an object like: { data: [ { label: 'LABEL_1', score: 0.99 } ] }
+    const prediction = result.data[0];
+    return prediction;
 
-      // The result is usually an array: [{ label: 'LABEL_0', score: 0.99 }, ...]
-      // We want the top result
-      const topResult = result[0]; // Hugging Face sorts by highest score automatically
-      
-      const category = mapLabelToCategory(topResult.label);
-      
-      return {
-        label: category,
-        confidence: topResult.score, // e.g. 0.998
-        raw: result // Keep raw data just in case
-      };
-
-    } catch (err) {
-      // 503 Error = Model is "Cold" (Loading). We must wait and retry.
-      if (err.message.includes("503") || err.message.includes("loading")) {
-        console.log(`⏳ Model is waking up... waiting ${3 * (attempts + 1)}s`);
-        attempts++;
-        await wait(3000 * attempts); 
-      } else {
-        throw err; // Real error (Auth failed, etc.)
-      }
-    }
+  } catch (error) {
+    console.error("❌ AI Service Error:", error.message);
+    throw new Error(`AI Model Error: ${error.message}`);
   }
-
-  throw new Error("Model is taking too long to wake up. Please try again in 1 minute.");
 }
 
-/* ===== EXPORTS ===== */
+/* ================= EXPORTED FUNCTIONS ================= */
 
-// 1. Classify from URL
+// 1. Analyze a URL
 export async function classifyFromLink(url) {
   try {
+    console.log(`📄 Extracting text from: ${url}`);
     const text = await extractTextFromLink(url);
 
-    if (!text || text.trim().length === 0) {
-      return { success: false, error: "No readable text found on webpage." };
+    if (!text || text.trim().length < 50) {
+      return { 
+        success: false, 
+        error: "Webpage content was empty or unreadable (too short)." 
+      };
     }
 
-    const result = await performClassification(text);
+    const result = await querySpace(text);
 
     return {
       success: true,
-      label: result.label,      // "Fake" or "Real"
-      confidence: result.confidence,
+      label: mapLabelToCategory(result.label),
+      confidence: result.score,
       snippet: text.slice(0, 150) + "..." 
     };
 
   } catch (err) {
-    return { success: false, error: err.message };
+    return { 
+      success: false, 
+      error: `Analysis failed: ${err.message}` 
+    };
   }
 }
 
-// 2. Classify from PDF
-export async function classifyFromPdf(path) {
+// 2. Analyze Raw Text
+export async function classifyText(text) {
   try {
-    const text = await exportTextFromPdf(path);
-    
-    if (!text || text.length < 50) {
-       return { success: false, error: "PDF text too short." };
+    if (!text || text.trim().length < 20) {
+      return { success: false, error: "Text is too short to analyze." };
     }
 
-    const result = await performClassification(text);
-    
+    const result = await querySpace(text);
+
     return {
       success: true,
-      label: result.label,
-      confidence: result.confidence
+      label: mapLabelToCategory(result.label),
+      confidence: result.score
     };
+
   } catch (err) {
     return { success: false, error: err.message };
   }
 }
 
-// 3. Classify Raw Text (for manual input)
-export async function classifyText(text) {
+// 3. Analyze PDF
+export async function classifyFromPdf(path) {
   try {
-    if (!text || text.length < 20) {
-      return { success: false, error: "Text is too short to check." };
+    console.log(`📂 Processing PDF at: ${path}`);
+    const text = await exportTextFromPdf(path);
+    
+    if (!text || text.length < 50) {
+       return { success: false, error: "PDF text could not be extracted or is too short." };
     }
-    const result = await performClassification(text);
-    return { success: true, label: result.label, confidence: result.confidence };
+
+    const result = await querySpace(text);
+    
+    return {
+      success: true,
+      label: mapLabelToCategory(result.label),
+      confidence: result.score
+    };
   } catch (err) {
     return { success: false, error: err.message };
   }

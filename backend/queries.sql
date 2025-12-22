@@ -1,14 +1,9 @@
-CREATE TABLE history (
-    id SERIAL PRIMARY KEY,
-    user_id INT,
-    input_type VARCHAR(20) NOT NULL,    -- 'url' or 'pdf'
-    input_value TEXT NOT NULL,
-    result VARCHAR(20) NOT NULL,
-    confidence_score FLOAT NOT NULL,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    metadata JSONB
-);
+-- 1. Reset Database (Start Fresh)
+DROP TABLE IF EXISTS history;
+DROP TABLE IF EXISTS documents;
+DROP TABLE IF EXISTS users;
 
+-- 2. Create Users Table
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
@@ -17,17 +12,28 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-ALTER TABLE history
-ADD CONSTRAINT fk_user
-FOREIGN KEY (user_id)
-REFERENCES users(id)
-ON DELETE SET NULL;
+-- 3. Create History Table
+-- Matches your Node.js code: (url, result, confidence, created_at)
+CREATE TABLE history (
+    id SERIAL PRIMARY KEY,
+    user_id INT,               -- NULL allowed for anonymous users
+    url TEXT,                  -- Stores the link analyzed
+    result TEXT,               -- Stores the label (e.g., "Real", "Fake")
+    confidence FLOAT,          -- Stores the AI score (e.g., 0.98)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    CONSTRAINT fk_user
+      FOREIGN KEY (user_id) 
+      REFERENCES users(id) 
+      ON DELETE SET NULL
+);
 
+-- 4. Create Documents Table
 CREATE TABLE documents (
     id SERIAL PRIMARY KEY,
     user_id INT REFERENCES users(id) ON DELETE SET NULL,
     original_filename VARCHAR(255),
-    file_path TEXT NOT NULL,            -- location where PDF is saved
+    file_path TEXT NOT NULL,
     extracted_text TEXT,
     uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

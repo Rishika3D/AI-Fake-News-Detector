@@ -1,70 +1,114 @@
-import db from "../db/db.js";
-import { classifyFromLink, classifyFromPdf } from "../services/huggingFaceServices.js";
+import { db } from "../index.js"; 
+import { classifyFromLink, classifyFromPdf } from "../services/huggingFaceServices.js"; 
+import fs from 'fs';
 
-// ------------------- URL ANALYSIS -------------------
+// 1. Controller for URL Analysis
 export const analyzeUrl = async (req, res) => {
+  const { url, userId } = req.body;
+
+  if (!url) {
+    return res.status(400).json({ error: "URL is required" });
+  }
+
   try {
-    const url = req.body.url || req.query.url;
+    console.log(`🔎 Analyzing URL: ${url}`);
+    
+    // Call the AI Service
+    const analysisResult = await classifyFromLink(url);
 
-    if (!url) {
-      return res.status(400).json({ error: "URL is required." });
+    // 🛑 SAFETY CHECK
+    if (!analysisResult || !analysisResult.success) {
+      console.warn("⚠️ AI Analysis failed or model is sleeping. Skipping DB save.");
+      return res.status(503).json({ 
+        success: false,
+        error: "Model is waking up. Please try again in 30 seconds.",
+        details: analysisResult?.error 
+      });
     }
 
-    // 1. classify using HuggingFace service
-    const result = await classifyFromLink(url);
+    // ✅ FIXED: Handle Anonymous User
+    // If userId exists, use it. If not, use NULL (not 'anonymous')
+    const user = userId ? parseInt(userId) : null;
 
-    if (!result) {
-      return res.status(500).json({ error: "Could not classify link." });
-    }
+    const query = `
+      INSERT INTO history (url, result, confidence, user_id, created_at)
+      VALUES ($1, $2, $3, $4, NOW())
+      RETURNING *;
+    `;
 
-    // 2. save to DB
-    await db.query(
-      `INSERT INTO history (input_type, input_value, result, confidence_score)
-       VALUES ($1, $2, $3, $4)`,
-      ["url", url, result.label, result.confidence]
-    );
+    const savedRecord = await db.query(query, [
+      url, 
+      analysisResult.label,       
+      analysisResult.confidence, 
+      user // This is now an Integer or Null
+    ]);
 
-    // 3. send back result
-    return res.json({
-      label: result.label,
-      confidence: result.confidence,
+    res.json({
+      success: true,
+      data: {
+        ...analysisResult,
+        savedId: savedRecord.rows[0].id
+      }
     });
 
-  } catch (err) {
-    console.error("URL analysis error:", err.message);
-    res.status(500).json({ error: "Internal server error." });
+  } catch (error) {
+    console.error("❌ Controller Error:", error.message);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 };
 
-
-// ------------------- PDF ANALYSIS -------------------
+// 2. Controller for PDF Analysis
 export const analyzePdf = async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No PDF file uploaded" });
+  }
+
   try {
-    const filePath = req.file?.path;
+    const filePath = req.file.path;
+    console.log(`📄 Analyzing PDF: ${filePath}`);
 
-    if (!filePath) {
-      return res.status(400).json({ error: "PDF file is required." });
+    const analysisResult = await classifyFromPdf(filePath);
+
+    // Clean up file
+    if (fs.existsSync(filePath)) {
+       fs.unlinkSync(filePath);
     }
 
-    const result = await classifyFromPdf(filePath);
-
-    if (!result) {
-      return res.status(500).json({ error: "Could not classify PDF." });
+    // 🛑 SAFETY CHECK
+    if (!analysisResult || !analysisResult.success) {
+      return res.status(422).json({ 
+        success: false,
+        error: "PDF analysis failed. " + (analysisResult?.error || "")
+      });
     }
 
-    await db.query(
-      `INSERT INTO history (input_type, input_value, result, confidence_score, metadata)
-       VALUES ($1, $2, $3, $4, $5)`,
-      ["pdf", filePath, result.label, result.confidence, {}]
-    );
+    // ✅ FIXED: Handle Anonymous User
+    const user = req.body.userId ? parseInt(req.body.userId) : null;
+    
+    const query = `
+      INSERT INTO history (url, result, confidence, user_id, created_at)
+      VALUES ($1, $2, $3, $4, NOW())
+      RETURNING *;
+    `;
 
-    return res.json({
-      label: result.label,
-      confidence: result.confidence,
+    // Note: We save "PDF Upload" as the URL placeholder
+    const savedRecord = await db.query(query, [
+      "PDF Upload", 
+      analysisResult.label,
+      analysisResult.confidence,
+      user
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        ...analysisResult,
+        savedId: savedRecord.rows[0].id
+      }
     });
 
-  } catch (err) {
-    console.error("PDF analysis error:", err.message);
-    res.status(500).json({ error: "Internal server error." });
+  } catch (error) {
+    console.error("❌ PDF Controller Error:", error);
+    res.status(500).json({ error: "Failed to process PDF" });
   }
 };
