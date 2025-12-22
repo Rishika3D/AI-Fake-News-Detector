@@ -40,7 +40,7 @@ const InsertData = () => {
       
       if (mode === "url") {
         // Call URL Endpoint
-        response = await fetch("http://localhost:5000/api/analyze-url", {
+        response = await fetch("http://localhost:5050/api/analyze/url", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url }),
@@ -50,7 +50,7 @@ const InsertData = () => {
         const formData = new FormData();
         formData.append("pdf", pdf);
         
-        response = await fetch("http://localhost:5000/api/analyze-pdf", {
+        response = await fetch("http://localhost:5050/api/analyze/pdf", {
           method: "POST",
           body: formData,
         });
