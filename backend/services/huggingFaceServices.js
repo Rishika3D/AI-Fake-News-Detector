@@ -5,120 +5,100 @@ import { exportTextFromPdf } from "./pdfService.js";
 
 dotenv.config();
 
-// ✅ YOUR CUSTOM MODEL
-const SPACE_ID = "Rishika08/fake-news-detector";
-
-/* ================= HELPERS ================= */
+const SPACE_ID = "Rishika08/fake-news-detector-v2"; 
 
 /**
- * MAPPING BASED ON YOUR TEST RESULTS:
- * LABEL_0 = Real
- * LABEL_1 = Fake
+ * MAPPING: Converts model output labels to user-friendly categories.
  */
 function mapLabelToCategory(label) {
-  const normalized = label?.toString().toUpperCase() || "";
-  
-  // Check for Real (LABEL_0)
-  if (normalized.includes("LABEL_0") || normalized === "0") {
+  // Convert to string and uppercase to handle "Real", "REAL", or "LABEL_1"
+  const normalized = label?.toString().toUpperCase().trim() || "";
+
+  if (normalized === "REAL" || normalized === "LABEL_1" || normalized === "1") {
     return "Real";
   }
-  
-  // Check for Fake (LABEL_1)
-  if (normalized.includes("LABEL_1") || normalized === "1") {
+  if (normalized === "FAKE" || normalized === "LABEL_0" || normalized === "0") {
     return "Fake";
   }
-  
+
   return "Uncertain";
 }
 
 /**
- * CONNECT TO YOUR SPACE
+ * AI ENGINE: Communicates with your Hugging Face Space.
  */
 async function queryMySpace(text) {
   try {
-    console.log(`📡 Connecting to your Space: ${SPACE_ID}...`);
-    
-    // 1. Connect to your custom Space
+    console.log(`📡 Connecting to: ${SPACE_ID}`);
     const client = await Client.connect(SPACE_ID);
 
-    // 2. Send the text to your app's "/predict" endpoint
-    // We truncate to 1500 chars to fit the model's window
-    const result = await client.predict("/predict", [ text.slice(0, 1500) ]);
+    // Clean text: Limit length and remove newlines for API stability
+    const titleSnippet = text.slice(0, 500).replace(/\n/g, " ").trim();
 
-    // 3. Extract Result
-    // Gradio returns: { data: [ { label: 'LABEL_0', score: 0.99 } ] }
-    const prediction = result.data[0]; 
-    return prediction;
+    // Call the named endpoint "/predict"
+    const result = await client.predict("/predict", { 
+        text: titleSnippet 
+    });
+
+    if (result && result.data) {
+        console.log("✅ Success! Model returned:", result.data[0]);
+        return result.data[0]; 
+    }
+    throw new Error("AI returned success but no data was found.");
 
   } catch (error) {
-    console.error("❌ Space Error:", error.message);
-    throw new Error(`Failed to connect to your AI model. Is the Space running? Error: ${error.message}`);
+    console.error("❌ API Error:", error.message);
+    throw error;
   }
 }
 
 /* ================= EXPORTED FUNCTIONS ================= */
 
+/**
+ * Analyzes news from a URL and prepares data for the Database
+ */
 export async function classifyFromLink(url) {
   try {
-    console.log(`🔎 Scraping URL: ${url}`);
-    
-    // 🛡️ 1. SAFETY CHECK: Whitelist Trusted Domains
-    // If the URL is from a known reliable source, don't waste AI resources (and risk error)
-    const trustedDomains = ["bbc.com", "reuters.com", "nytimes.com", "wikipedia.org", "cnn.com"];
-    
-    // Check if the URL contains any trusted domain
-    if (trustedDomains.some(domain => url.includes(domain))) {
-        console.log("🔒 Whitelist: Trusted Source Detected");
-        // We still scrape to get the snippet for the UI, but we force the label to "Real"
-        const text = await extractTextFromLink(url);
-        return { 
-           success: true, 
-           label: "Real", 
-           confidence: 1.0, // 100% confidence
-           snippet: text ? text.slice(0, 200) + "..." : "Trusted Source Content"
-        };
+    const scrapedText = await extractTextFromLink(url);
+
+    // 🛑 NEW: Safety Check for Bot Blocks or 404s
+    const errorPageKeywords = ["404", "page not found", "access denied", "enable cookies", "forbidden"];
+    const isError = errorPageKeywords.some(word => scrapedText.toLowerCase().includes(word));
+
+    if (!scrapedText || scrapedText.length < 300 || isError) {
+      return { 
+        success: false, 
+        isBlocked: true, // Tag this so the frontend knows how to style it
+        error: "Source Protected: This website blocked our automated scan. The AI cannot verify the content safely." 
+      };
     }
 
-    // 2. SCRAPE & PREDICT (For everything else)
-    const text = await extractTextFromLink(url);
-
-    if (!text || text.trim().length < 50) {
-      return { success: false, error: "Webpage content was empty or unreadable." };
-    }
-
-    console.log(`🧠 Sending to AI model...`);
-    const result = await queryMySpace(text);
-
-    return {
-      success: true,
-      label: mapLabelToCategory(result.label),
-      confidence: result.score,
-      snippet: text.slice(0, 200) + "..." 
-    };
-
+    // ... (rest of your existing AI/HuggingFace logic)
   } catch (err) {
     return { success: false, error: err.message };
   }
 }
 
+/**
+ * Analyzes news from a PDF file
+ */
 export async function classifyFromPdf(path) {
-  try {
-    console.log(`📂 Processing PDF: ${path}`);
-    const text = await exportTextFromPdf(path);
-    
-    if (!text || text.length < 50) {
-       return { success: false, error: "PDF text too short." };
+    try {
+        console.log(`📄 Analyzing PDF: ${path}`);
+        const text = await exportTextFromPdf(path);
+        
+        if (!text || text.trim().length < 10) throw new Error("PDF content is empty.");
+        
+        const prediction = await queryMySpace(text);
+        
+        return {
+            success: true,
+            label: mapLabelToCategory(prediction.label),
+            confidence: parseFloat((prediction.score * 100).toFixed(2)),
+            snippet: text.slice(0, 150) + "..."
+        };
+    } catch (err) {
+        console.error("❌ classifyFromPdf Error:", err.message);
+        return { success: false, error: err.message };
     }
-
-    const result = await queryMySpace(text);
-    
-    return {
-      success: true,
-      label: mapLabelToCategory(result.label),
-      confidence: result.score,
-      snippet: text.slice(0, 200) + "..."
-    };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
 }

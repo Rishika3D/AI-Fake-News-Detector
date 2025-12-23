@@ -6,31 +6,33 @@ export const exportTextFromPdf = async (filepath) => {
     const dataBuffer = await fs.readFile(filepath);
     const dataUint8Array = new Uint8Array(dataBuffer);
 
-    // 3. Load the PDF document
+    // Load the PDF document
     const pdf = await pdfjsLib.getDocument({
-      data: dataUint8Array, // Use the new Uint8Array here
+      data: dataUint8Array,
       useWorkerFetch: false,
       disableFontFace: true,
-      standardFontDataUrl: "pdfjs-dist/standard_fonts/",
+      standardFontDataUrl: "node_modules/pdfjs-dist/standard_fonts/",
     }).promise;
 
     let allText = "";
 
-    // 4. Loop through each page
-    for (let i = 1; i <= pdf.numPages; i++) {
+    // Loop through pages (Max 10 pages to avoid AI token limits)
+    const pageCount = Math.min(pdf.numPages, 10);
+    
+    for (let i = 1; i <= pageCount; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
       const pageText = textContent.items.map(item => item.str).join(" ");
       allText += pageText + "\n"; 
     }
 
-    if (!allText) {
-      throw new Error("No text found in PDF.");
+    if (!allText.trim()) {
+      throw new Error("No readable text found in PDF.");
     }
 
-    return allText;
+    return allText.trim();
   } catch (err) {
-    console.error("Error parsing PDF:", err.message);
+    console.error("❌ PDF Extraction Error:", err.message);
     throw new Error("Failed to extract text from PDF.");
   }
 };
