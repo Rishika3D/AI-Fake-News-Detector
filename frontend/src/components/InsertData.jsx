@@ -48,7 +48,7 @@ const InsertData = () => {
       } else {
         // Call PDF Endpoint (Requires FormData)
         const formData = new FormData();
-        formData.append("pdf", pdf);
+        formData.append("file", pdf);
         
         response = await fetch("http://localhost:5050/api/analyze/pdf", {
           method: "POST",
