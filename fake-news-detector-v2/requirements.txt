@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic
+transformers
+torch
+gradio
+protobuf
+sentencepiece
+accelerate
