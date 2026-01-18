@@ -1,4 +1,4 @@
-import { db } from "../index.js"; 
+import db from "../db/db.js";
 import { classifyFromLink } from "../services/huggingFaceServices.js"; 
 import { exportTextFromPdf } from "../services/pdfService.js";
 import { Client } from "@gradio/client";

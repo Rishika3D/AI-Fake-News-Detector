@@ -1,45 +1,41 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import analyzeRoutes from './routes/analyzeRoutes.js';
-import pg from 'pg';
+import db from './db/db.js'; 
 
-/* ================= LOAD ENV FIRST ================= */
+// 2. Import Both Route Files
+import analyzeRoutes from './routes/analyzeRoutes.js';
+import authRoutes from './routes/userRoutes.js'; // You were missing this!
+
+/* ================= LOAD ENV ================= */
 dotenv.config();
 
-/* ================= DB ================= */
-export const db = new pg.Client({
-  user: process.env.PGUSER,
-  host: process.env.PGHOST || "localhost",
-  database: process.env.PGDATABASE,
-  password: process.env.PGPASSWORD,
-  port: process.env.PGPORT || 5432,
-});
-
-db.connect()
-  .then(() => console.log("📦 Connected to PostgreSQL"))
-  .catch((err) => console.error("❌ DB Connection Error:", err));
-
-/* ================= APP ================= */
+/* ================= APP SETUP ================= */
 const app = express();
 const PORT = process.env.PORT || 5050;
 
 app.use(cors({
-  origin: "http://localhost:5173",
-  methods: ["GET", "POST"],
+  origin: "http://localhost:5173", // Your Frontend URL
+  methods: ["GET", "POST", "PUT", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
 app.use(express.json());
 
+/* ================= ROUTES ================= */
+
+// Test Route
 app.get('/', (req, res) => {
-  res.status(200).send("Backend running ✅");
+  res.status(200).send("Backend is running ✅");
 });
 
-/* ================= ROUTES ================= */
+// Auth Routes -> /api/auth/login, /api/auth/signup
+app.use('/api/auth', authRoutes);
+
+// Analyze Routes -> /api/analyze/url, /api/analyze/pdf, /api/analyze/history
 app.use('/api/analyze', analyzeRoutes);
 
-
+/* ================= START SERVER ================= */
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
 });

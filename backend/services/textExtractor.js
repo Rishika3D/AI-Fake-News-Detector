@@ -1,106 +1,91 @@
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { Readability } from '@mozilla/readability';
+import { JSDOM } from 'jsdom';
 
-// Use the stealth plugin to bypass simple bot detection
+// 1. Activate Stealth Mode (Bypasses Cloudflare & Bot Detection)
 puppeteer.use(StealthPlugin());
 
 export async function extractTextFromLink(url) {
   let browser;
   try {
+    // 2. Launch Browser with "Human" settings
     browser = await puppeteer.launch({
       headless: "new",
       args: [
-        '--no-sandbox', 
+        '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled', 
-        '--window-size=1920,1080'
-      ] 
+        '--window-size=1920,1080',
+        '--disable-blink-features=AutomationControlled' // Crucial for stealth
+      ]
     });
 
     const page = await browser.newPage();
-    
-    // 1. Set User-Agent to look like a real Chrome browser on Windows
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
 
-    // 2. Add Headers to mimic a referral from Google
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Referer': 'https://www.google.com/' 
+    // 3. Set a Real User-Agent (Update this periodically)
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+    // 4. Block Images/Fonts/CSS to speed up loading (We only need text)
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
+        req.abort();
+      } else {
+        req.continue();
+      }
     });
 
-    // 3. Load the page (wait for network to be idle)
+    console.log(`🌍 Navigating to: ${url}`);
+    
+    // 5. Go to page (Wait until network is quiet)
     const response = await page.goto(url, { 
       waitUntil: 'networkidle2', 
-      timeout: 45000 // Extended timeout for heavy news sites
+      timeout: 30000 
     });
 
-    // 4. Check for Bot Blocks immediately
-    const pageTitle = await page.title();
-    if (response.status() === 403 || response.status() === 404 || pageTitle.toLowerCase().includes("access denied")) {
-        throw new Error(`Target site blocked the scraper (Status: ${response.status()})`);
+    // Check for 403/404 errors
+    if (response.status() >= 400) {
+       throw new Error(`Website blocked us (Status: ${response.status()})`);
     }
 
-    // 5. Human Behavior Simulation (Scroll to trigger lazy loading)
-    await page.evaluate(async () => {
-        await new Promise(resolve => {
-            let totalHeight = 0;
-            const distance = 100;
-            const timer = setInterval(() => {
-                const scrollHeight = document.body.scrollHeight;
-                window.scrollBy(0, distance);
-                totalHeight += distance;
-                if(totalHeight >= scrollHeight || totalHeight > 2000){ // Don't scroll forever
-                    clearInterval(timer);
-                    resolve();
-                }
-            }, 100);
-        });
-    });
+    // 6. RAW HTML EXTRACTION
+    // We don't extract text inside Puppeteer. We just grab the raw HTML.
+    // This is faster and less prone to breaking.
+    const html = await page.content();
 
-    // 6. Intelligent Extraction Logic
-    const cleanText = await page.evaluate(() => {
-        // Remove "Junk" elements that confuse AI
-        const junkSelectors = [
-            'nav', 'footer', 'header', 'script', 'style', 'aside', 'iframe', 
-            '.ads', '.ad-container', '#cookie-banner', '.menu', '.sidebar'
-        ];
-        junkSelectors.forEach(sel => {
-            document.querySelectorAll(sel).forEach(el => el.remove());
-        });
+    // 7. THE MAGIC: Parse with Mozilla Readability
+    // This removes ads, navbars, and cookie banners automatically.
+    const dom = new JSDOM(html, { url: url });
+    const reader = new Readability(dom.window.document);
+    const article = reader.parse();
 
-        // Strategy A: Look for common article containers
-        const articleSelectors = ['article', '[role="main"]', '.article-body', '.story-content'];
-        let mainContent = null;
-        
-        for (let sel of articleSelectors) {
-            const el = document.querySelector(sel);
-            if (el && el.innerText.length > 500) {
-                mainContent = el;
-                break;
-            }
-        }
-
-        // Strategy B: Fallback to all Paragraphs if no container found
-        const source = mainContent || document.body;
-        const paragraphs = Array.from(source.querySelectorAll('p'));
-
-        // Filter: Keep only "meaningful" paragraphs (> 40 chars or > 8 words)
-        return paragraphs
-            .map(p => p.innerText.trim())
-            .filter(text => text.length > 40 && text.split(' ').length > 8)
-            .join('\n\n');
-    });
-
-    // 7. Final Validation
-    if (!cleanText || cleanText.length < 200) {
-        throw new Error("Insufficient text found. The page might be empty, paywalled, or blocking bots.");
+    if (!article || !article.textContent) {
+        throw new Error("Page loaded, but no article content was found (Is it a video site or paywall?)");
     }
 
-    return cleanText.trim();
+    // 8. Clean up whitespace
+    const cleanTitle = article.title.trim();
+    const cleanText = article.textContent
+        .replace(/\n\s*\n/g, "\n\n") // Fix double spacing
+        .trim();
+
+    // 9. Validation
+    if (cleanText.length < 200) {
+        throw new Error("Text too short. Probably a captcha or cookie wall.");
+    }
+
+    console.log(`✅ Extracted: "${cleanTitle}" (${cleanText.length} chars)`);
+
+    return `${cleanTitle}\n\n${cleanText}`;
 
   } catch (error) {
-    console.error(`❌ Scraper Error [${url}]: ${error.message}`);
-    throw error; // Rethrow so the Controller can send a 500 error
+    console.error(`❌ Scraper Failed: ${error.message}`);
+    
+    // Return a specific error object so the frontend knows what happened
+    if (error.message.includes("timeout")) throw new Error("The website took too long to respond.");
+    if (error.message.includes("blocked")) throw new Error("Access Denied: The website blocked the scraper.");
+    
+    throw error;
   } finally {
     if (browser) await browser.close();
   }

@@ -1,20 +1,20 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Shield, User, Mail, Lock, ArrowRight, Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 const AuthPage = () => {
-  const [isLogin, setIsLogin] = useState(true); // Toggle state
+  const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
   
   const [formData, setFormData] = useState({
-    name: "",
+    username: "", // Changed from 'name' to 'username' to match your backend
     email: "",
     password: "",
   });
 
-  /* ------------------------------ */
-  /* HOLOGRAPHIC CURSOR GLOW     */
-  /* ------------------------------ */
+  /* Holographic Cursor Effect */
   useEffect(() => {
     const holo = document.getElementById("holo-auth");
     if (!holo) return;
@@ -35,156 +35,122 @@ const AuthPage = () => {
     e.preventDefault();
     setLoading(true);
 
-    // Mock API Call
-    setTimeout(() => {
-      console.log(isLogin ? "Logging in..." : "Signing up...", formData);
+    // 1. Determine Endpoint based on mode
+    // Assuming you mounted your auth routes at /api/auth
+    const endpoint = isLogin 
+      ? "http://localhost:5050/api/auth/login" 
+      : "http://localhost:5050/api/auth/signup";
+
+    try {
+      // 2. Prepare payload (Signup needs username, Login doesn't)
+      const payload = isLogin 
+        ? { email: formData.email, password: formData.password }
+        : { username: formData.username, email: formData.email, password: formData.password };
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Authentication failed");
+      }
+
+      // 3. Handle Success
+      if (isLogin) {
+        // Store Token AND User ID (Required for your analyze endpoint)
+        localStorage.setItem("token", data.token);
+        localStorage.setItem("userId", data.user.id); 
+        localStorage.setItem("username", data.user.username);
+        
+        navigate("/dashboard");
+      } else {
+        alert("Account created! Please log in.");
+        setIsLogin(true); // Switch to login view
+      }
+
+    } catch (error) {
+      alert(error.message);
+    } finally {
       setLoading(false);
-      // Here you would redirect the user or save the token
-    }, 1500);
+    }
   };
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center px-4">
-      {/* Unique ID for Auth page holo to avoid conflicts if rendered together */}
+    <div className="relative min-h-screen flex items-center justify-center px-4 overflow-hidden">
       <div id="holo-auth" className="holo-light"></div>
 
       <motion.div
         initial={{ opacity: 0, y: 25 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="w-full max-w-xl relative z-[10]"
+        className="w-full max-w-md relative z-[10]"
       >
-        <div className="text-center mb-10">
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.5 }}
-            className="inline-flex items-center justify-center size-20 rounded-3xl shadow-xl bg-[#030213]"
+        <div className="text-center mb-8">
+          <motion.div 
+            whileHover={{ scale: 1.05 }}
+            className="inline-flex items-center justify-center size-16 rounded-2xl shadow-xl bg-primary mb-4"
           >
-            <Shield className="size-10 text-white" />
+            <Shield className="size-8 text-white" />
           </motion.div>
-          <h1 className="text-4xl font-medium tracking-tight mt-4">
-            {isLogin ? "Welcome Back" : "Join VeriNews"}
-          </h1>
-          <p className="text-muted-foreground mt-2">
-            {isLogin 
-              ? "Authenticate to access the verification engine." 
-              : "Create an account to start analyzing content."}
-          </p>
+          <h1 className="text-3xl font-medium tracking-tight">VeriNews AI</h1>
+          <p className="text-muted-foreground mt-2">Identity Verification</p>
         </div>
 
-        <motion.div
-          initial={{ opacity: 0, scale: 0.96 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.3 }}
-          className="bg-card rounded-2xl shadow-xl p-8 border border-border backdrop-blur-md"
-        >
-          {/* Toggle between Login and Signup */}
-          <div className="flex bg-muted p-1 rounded-lg mb-8">
+        <div className="bg-card rounded-2xl shadow-2xl p-8 border border-border backdrop-blur-xl">
+          {/* Toggle Buttons */}
+          <div className="flex bg-muted p-1 rounded-lg mb-6">
             <button
-              className={`flex-1 py-2 rounded-md text-sm font-medium transition ${
-                isLogin ? "bg-card shadow text-foreground" : "text-muted-foreground"
-              }`}
+              className={`flex-1 py-2 rounded-md text-sm font-medium transition ${isLogin ? "bg-card shadow text-foreground" : "text-muted-foreground"}`}
               onClick={() => setIsLogin(true)}
             >
               Login
             </button>
             <button
-              className={`flex-1 py-2 rounded-md text-sm font-medium transition ${
-                !isLogin ? "bg-card shadow text-foreground" : "text-muted-foreground"
-              }`}
+              className={`flex-1 py-2 rounded-md text-sm font-medium transition ${!isLogin ? "bg-card shadow text-foreground" : "text-muted-foreground"}`}
               onClick={() => setIsLogin(false)}
             >
-              Sign Up
+              Register
             </button>
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <AnimatePresence mode="popLayout">
-              {/* Name Field (Only for Sign Up) */}
+             <AnimatePresence mode="popLayout">
               {!isLogin && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden"
-                >
-                  <label className="font-medium block mb-2">Full Name</label>
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                   <div className="relative">
                     <User className="absolute left-4 top-3.5 size-5 text-muted-foreground" />
-                    <input
-                      name="name"
-                      type="text"
-                      placeholder="Agent Smith"
-                      required
-                      className="w-full bg-input-background border border-border rounded-lg pl-12 pr-4 py-3 focus:ring-2 focus:ring-primary outline-none"
-                      value={formData.name}
-                      onChange={handleChange}
+                    <input 
+                      name="username" 
+                      type="text" 
+                      placeholder="Username" 
+                      required={!isLogin} // Only required for signup
+                      className="w-full bg-input-background border border-border rounded-lg pl-12 pr-4 py-3 focus:ring-2 focus:ring-primary outline-none" 
+                      onChange={handleChange} 
+                      value={formData.username}
                     />
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
 
-            {/* Email Field */}
-            <div>
-              <label className="font-medium block mb-2">Email Address</label>
-              <div className="relative">
-                <Mail className="absolute left-4 top-3.5 size-5 text-muted-foreground" />
-                <input
-                  name="email"
-                  type="email"
-                  placeholder="name@example.com"
-                  required
-                  className="w-full bg-input-background border border-border rounded-lg pl-12 pr-4 py-3 focus:ring-2 focus:ring-primary outline-none"
-                  value={formData.email}
-                  onChange={handleChange}
-                />
-              </div>
+            <div className="relative">
+              <Mail className="absolute left-4 top-3.5 size-5 text-muted-foreground" />
+              <input name="email" type="email" placeholder="Email" required className="w-full bg-input-background border border-border rounded-lg pl-12 pr-4 py-3 focus:ring-2 focus:ring-primary outline-none" onChange={handleChange} value={formData.email} />
             </div>
 
-            {/* Password Field */}
-            <div>
-              <label className="font-medium block mb-2">Password</label>
-              <div className="relative">
-                <Lock className="absolute left-4 top-3.5 size-5 text-muted-foreground" />
-                <input
-                  name="password"
-                  type="password"
-                  placeholder="••••••••"
-                  required
-                  className="w-full bg-input-background border border-border rounded-lg pl-12 pr-4 py-3 focus:ring-2 focus:ring-primary outline-none"
-                  value={formData.password}
-                  onChange={handleChange}
-                />
-              </div>
+            <div className="relative">
+              <Lock className="absolute left-4 top-3.5 size-5 text-muted-foreground" />
+              <input name="password" type="password" placeholder="Password" required className="w-full bg-input-background border border-border rounded-lg pl-12 pr-4 py-3 focus:ring-2 focus:ring-primary outline-none" onChange={handleChange} value={formData.password} />
             </div>
 
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="mt-4 w-full bg-primary text-primary-foreground py-3 rounded-lg text-base font-medium hover:opacity-90 transition disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {loading ? (
-                <Loader2 className="animate-spin size-5" />
-              ) : (
-                <>
-                  {isLogin ? "Access System" : "Create Account"}
-                  <ArrowRight className="size-5" />
-                </>
-              )}
+            <button type="submit" disabled={loading} className="mt-2 w-full bg-primary text-primary-foreground py-3 rounded-lg font-medium hover:opacity-90 transition flex items-center justify-center gap-2">
+              {loading ? <Loader2 className="animate-spin size-5" /> : <>{isLogin ? "Enter System" : "Create Account"} <ArrowRight className="size-5" /></>}
             </button>
           </form>
-
-          {/* Footer Text */}
-          <div className="mt-6 text-center text-sm text-muted-foreground">
-            {isLogin ? "Forgot your password? " : "By joining, you agree to our "}
-            <a href="#" className="text-primary font-medium hover:underline">
-              {isLogin ? "Reset credentials" : "Terms of Service"}
-            </a>
-          </div>
-        </motion.div>
+        </div>
       </motion.div>
     </div>
   );
