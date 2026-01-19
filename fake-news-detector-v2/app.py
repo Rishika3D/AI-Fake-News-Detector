@@ -1,105 +1,77 @@
-from fastapi import FastAPI, HTTPException
+import uvicorn
+from fastapi import FastAPI
 from pydantic import BaseModel
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import torch.nn.functional as F
-import os
 
-# Initialize the API
-app = FastAPI(title="VeriNews AI Engine")
+app = FastAPI()
 
-# ==========================================
-# 1. CONFIGURATION
-# ==========================================
-# 🚀 We now point to your Hugging Face Cloud Repository
-MODEL_ID = "Rishika08/verinews-roberta"
+# 🧠 YOUR MODEL
+MODEL_NAME = "hamzab/roberta-fake-news-classification"
 
-# ==========================================
-# 2. LOAD AI MODEL (Runs once at startup)
-# ==========================================
-print(f"⏳ Downloading/Loading brain from {MODEL_ID}...")
+print(f"⏳ Downloading/Loading brain from {MODEL_NAME}...")
 
-try:
-    # This automatically fetches the model from Hugging Face if not found locally
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    model = AutoModelForSequenceClassification.from_pretrained(MODEL_ID)
-    
-    # Check for Hardware Acceleration
-    if torch.backends.mps.is_available():
-        device = torch.device("mps")
-        print("🚀 Using Acceleration: Apple MPS (Mac GPU)")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-        print("🚀 Using Acceleration: NVIDIA CUDA (GPU)")
-    else:
-        device = torch.device("cpu")
-        print("🐢 Using CPU")
-        
-    model.to(device)
-    print("✅ Model Loaded Successfully!")
+# 🛑 FORCE CPU (To prevent Mac MPS crashes during debugging)
+device = "cpu"
+print(f"🚀 Using Device: {device.upper()}")
 
-except Exception as e:
-    print(f"❌ CRITICAL ERROR: Could not download model.\n{e}")
-    # Common fix: Run 'huggingface-cli login' in terminal if repo is private
+# Load Model
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME).to(device)
 
-# ==========================================
-# 3. DEFINE INPUT FORMAT
-# ==========================================
+print("✅ Model Loaded Successfully!")
+print(f"🧐 Model expects {model.num_labels} labels.")
+
 class TextRequest(BaseModel):
     text: str
 
-# ==========================================
-# 4. PREDICTION ENDPOINT
-# ==========================================
 @app.post("/predict_text")
-async def predict_text(request: TextRequest):
-    if not request.text:
-        raise HTTPException(status_code=400, detail="Text cannot be empty")
-
+def predict_text(request: TextRequest):
+    print(f"\nIncoming request: {request.text[:30]}...")
     try:
-        # A. Preprocessing
-        inputs = tokenizer(
-            request.text, 
-            return_tensors="pt", 
-            truncation=True, 
-            max_length=512,
-            padding=True
-        ).to(device)
-
-        # B. Inference
+        # 1. Prepare Text
+        inputs = tokenizer(request.text, return_tensors="pt", truncation=True, max_length=512).to(device)
+        
+        # 2. Predict
         with torch.no_grad():
             outputs = model(**inputs)
+            logits = outputs.logits
+            
+            # 🔍 CRITICAL DEBUG: Print the shape!
+            print(f"🧠 Logits Shape: {logits.shape}")
+            print(f"🧠 Raw Logits: {logits}")
 
-        # C. Post-processing
-        logits = outputs.logits
-        probs = F.softmax(logits, dim=-1)
-        
-        # Extract scores
-        # Based on your training logs, index 0 is usually Fake, 1 is Real
-        # We use .item() to get a standard Python float
-        score_fake = probs[0][0].item()
-        score_real = probs[0][1].item()
+            # 3. Handle different model shapes safely
+            probs = F.softmax(logits, dim=1).cpu().numpy()[0]
+            print(f"📊 Probabilities: {probs}")
 
-        if score_real > score_fake:
-            prediction = "REAL"
-            confidence = score_real
-        else:
-            prediction = "FAKE"
-            confidence = score_fake
+            # Safe extraction
+            score_0 = float(probs[0]) 
+            # If model only has 1 label, this prevents crash:
+            score_1 = float(probs[1]) if len(probs) > 1 else 0.0
+
+            # Map results (Standard: 0=Fake, 1=Real)
+            # If your model is inverted, we will see it in the logs
+            if score_1 > score_0:
+                label = "Real"
+                confidence = score_1
+            else:
+                label = "Fake"
+                confidence = score_0
 
         return {
-            "label": prediction,
-            "confidence": round(confidence * 100, 2),
-            "raw_scores": {"REAL": score_real, "FAKE": score_fake}
+            "label": label,
+            "confidence": confidence * 100,
+            "raw_scores": {"LABEL_0": score_0, "LABEL_1": score_1}
         }
 
     except Exception as e:
-        print(f"❌ Prediction Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # 🚨 This prints the ACTUAL error to your terminal
+        print(f"❌ CRITICAL ERROR: {repr(e)}")
+        import traceback
+        traceback.print_exc()
+        return {"label": "ERROR", "confidence": 0, "error": str(e)}
 
-# ==========================================
-# 5. HEALTH CHECK
-# ==========================================
-@app.get("/")
-def health_check():
-    return {"status": "online", "model": MODEL_ID}
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
