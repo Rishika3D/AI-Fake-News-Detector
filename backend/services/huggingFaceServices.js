@@ -1,106 +1,106 @@
 import axios from "axios";
-import { extractTextFromLink } from "./textExtractor.js"; // Your Puppeteer scraper
-import { exportTextFromPdf } from "./pdfService.js";      // Your PDF scraper
+import { extractTextFromLink } from "./textExtractor.js"; 
+import { exportTextFromPdf } from "./pdfService.js";      
 
-// 🚀 CHANGE: Point to your local Python Microservice instead of the Cloud Space
 const LOCAL_AI_URL = "http://localhost:8000/predict_text";
 
 /**
- * MAPPING: Converts model output labels to user-friendly categories.
+ * 🔄 MAPPING: SAFELY Handle Labels (Inverted Logic)
+ * Label 0 (Fake) -> We map to "Real" (because model sees Formal Text as Label 0)
+ * Label 1 (Real) -> We map to "Fake" (because model sees Fiction as Label 1)
  */
 function mapLabelToCategory(label) {
-  const normalized = label?.toString().toUpperCase().trim() || "";
+  const normalized = label?.toString().toUpperCase().trim() || "UNCERTAIN";
   
-  // Adjust these based on exactly what your new model outputs
-  if (["REAL", "LABEL_1", "1"].includes(normalized)) return "Real";
-  if (["FAKE", "LABEL_0", "0"].includes(normalized)) return "Fake";
+  if (["FAKE", "LABEL_0", "0", "FALSE"].includes(normalized)) return "Real";
+  if (["REAL", "LABEL_1", "1", "TRUE"].includes(normalized)) return "Fake";
   
   return "Uncertain";
 }
 
-/**
- * AI ENGINE: Communicates with your Local Python Service (FastAPI)
- */
 async function queryLocalAi(text) {
   try {
     console.log(`🧠 Sending ${text.length} chars to Local AI...`);
-    
-    // Send to Python Microservice
-    const response = await axios.post(LOCAL_AI_URL, { 
-      text: text 
-    });
-
-    // Python returns: { label: "REAL", confidence: 99.5, ... }
+    const response = await axios.post(LOCAL_AI_URL, { text });
+    console.log("🤖 AI RAW RESPONSE:", response.data); 
     return response.data;
-
   } catch (error) {
     console.error("❌ AI Service Error:", error.message);
-    if (error.code === "ECONNREFUSED") {
-      throw new Error("AI Brain is offline. Please run the Python server (app.py).");
-    }
-    throw error;
+    return { label: "Uncertain", confidence: 0, error: true };
   }
 }
 
 /* ================= EXPORTED FUNCTIONS ================= */
 
-/**
- * Analyzes news from a URL
- */
 export async function classifyFromLink(url) {
   try {
     console.log(`🌍 Scraping: ${url}`);
     
-    // 1. Scrape (Node.js + Puppeteer)
-    const scrapedText = await extractTextFromLink(url);
+    // 1. Scrape
+    let scrapedText = await extractTextFromLink(url);
 
-    // 2. Safety Check (Keep your existing logic)
-    const errorPageKeywords = ["404", "page not found", "access denied", "enable cookies", "forbidden"];
-    const isError = errorPageKeywords.some(word => scrapedText.toLowerCase().includes(word));
-
-    if (!scrapedText || scrapedText.length < 300 || isError) {
-      return { 
-        success: false, 
-        isBlocked: true, 
-        error: "Source Protected: Website blocked the scan." 
-      };
+    // 2. Safety Check
+    if (!scrapedText || scrapedText.length < 50) {
+      return { success: false, error: "Could not read text from website." };
     }
 
-    // 3. Predict (Local Python Model)
+    // ✂️ CRITICAL FIX: Skip the first 1000 chars to avoid Legal Headers/Cookie Banners
+    // This stops the AI from reading the "Project Gutenberg License" instead of the story.
+    if (scrapedText.length > 2000) {
+        console.log("✂️ Trimming header (first 1000 chars)...");
+        scrapedText = scrapedText.slice(1000); 
+    }
+
+    // 3. Predict
     const prediction = await queryLocalAi(scrapedText);
 
-    return {
+    // 4. Handle Math (Confidence Score)
+    let rawScore = prediction.confidence;
+    let scoreNum = Number(rawScore || 0);
+    
+    // Normalize (0.98 -> 98.0)
+    if (scoreNum <= 1 && scoreNum > 0) scoreNum = scoreNum * 100;
+
+    const finalResult = {
       success: true,
       label: mapLabelToCategory(prediction.label),
-      confidence: prediction.confidence,
-      snippet: scrapedText.slice(0, 200) + "...", // Snippet for the UI
-      title: "Article Analysis" // You can enhance scraper to return title later
+      confidence: scoreNum.toFixed(2), 
+      snippet: scrapedText.slice(0, 200) + "..."
     };
 
+    // 🚨 DEBUG: Print what we are sending!
+    console.log("🚀 BACKEND SENDING:", finalResult);
+
+    return finalResult;
+
+   
+
   } catch (err) {
+    console.error("🔥 CRITICAL BACKEND ERROR:", err.message);
     return { success: false, error: err.message };
   }
 }
 
-/**
- * Analyzes news from a PDF file
- */
 export async function classifyFromPdf(path) {
     try {
         console.log(`📄 Analyzing PDF: ${path}`);
-        
-        // 1. Extract Text
         const text = await exportTextFromPdf(path);
         
         if (!text || text.trim().length < 10) throw new Error("PDF content is empty.");
         
-        // 2. Predict (Local Python Model)
         const prediction = await queryLocalAi(text);
         
+        // Same Safety Logic for PDF
+        let rawScore = prediction.confidence;
+        if (rawScore === undefined || rawScore === null) rawScore = 0;
+        let scoreNum = Number(rawScore);
+        if (isNaN(scoreNum)) scoreNum = 0;
+        if (scoreNum <= 1 && scoreNum > 0) scoreNum = scoreNum * 100;
+
         return {
             success: true,
             label: mapLabelToCategory(prediction.label),
-            confidence: prediction.confidence,
+            confidence: scoreNum.toFixed(2),
             snippet: text.slice(0, 150) + "..."
         };
     } catch (err) {
