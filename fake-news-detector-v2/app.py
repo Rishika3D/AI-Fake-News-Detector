@@ -1,77 +1,83 @@
-import uvicorn
-from fastapi import FastAPI
-from pydantic import BaseModel
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import torch.nn.functional as F
+import os
 
-app = FastAPI()
+app = Flask(__name__)
+CORS(app) # Allow React to talk to this API
 
-# 🧠 YOUR MODEL
-MODEL_NAME = "hamzab/roberta-fake-news-classification"
+# ============================================================
+# ☁️ CLOUD CONFIGURATION
+# ============================================================
+# This is YOUR specific model hosted on Hugging Face
+MODEL_ID = "Rishika08/faang-fact-checker"
 
-print(f"⏳ Downloading/Loading brain from {MODEL_NAME}...")
+print(f"⬇️  Initializing Logic Engine from: {MODEL_ID}...")
+print("    (First run may take 30s to download the model cache)")
 
-# 🛑 FORCE CPU (To prevent Mac MPS crashes during debugging)
-device = "cpu"
-print(f"🚀 Using Device: {device.upper()}")
+try:
+    # This automatically downloads your model from the internet
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    model = AutoModelForSequenceClassification.from_pretrained(MODEL_ID)
+    model.eval() # Set to inference mode (read-only)
+    print("✅ Model Loaded Successfully & Ready for Queries!")
+except Exception as e:
+    print(f"❌ Critical Error: Could not download model from Hugging Face.\n{e}")
+    exit(1)
 
-# Load Model
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME).to(device)
+# MNLI Label Mapping: 0=Entailment, 1=Neutral, 2=Contradiction
+LABELS = ["TRUSTED", "NEUTRAL", "FAKE"]
 
-print("✅ Model Loaded Successfully!")
-print(f"🧐 Model expects {model.num_labels} labels.")
+# ============================================================
+# 🔌 API ENDPOINT
+# ============================================================
+@app.route('/predict', methods=['POST'])
+def predict():
+    data = request.json
+    claim = data.get('claim')
+    evidence = data.get('evidence')
 
-class TextRequest(BaseModel):
-    text: str
+    # Basic Validation
+    if not claim or not evidence:
+        return jsonify({"error": "Please provide both a claim and evidence."}), 400
 
-@app.post("/predict_text")
-def predict_text(request: TextRequest):
-    print(f"\nIncoming request: {request.text[:30]}...")
-    try:
-        # 1. Prepare Text
-        inputs = tokenizer(request.text, return_tensors="pt", truncation=True, max_length=512).to(device)
-        
-        # 2. Predict
-        with torch.no_grad():
-            outputs = model(**inputs)
-            logits = outputs.logits
-            
-            # 🔍 CRITICAL DEBUG: Print the shape!
-            print(f"🧠 Logits Shape: {logits.shape}")
-            print(f"🧠 Raw Logits: {logits}")
+    # 1. Prepare Inputs for the AI
+    inputs = tokenizer(
+        claim, 
+        evidence, 
+        return_tensors="pt", 
+        truncation=True, 
+        max_length=512
+    )
 
-            # 3. Handle different model shapes safely
-            probs = F.softmax(logits, dim=1).cpu().numpy()[0]
-            print(f"📊 Probabilities: {probs}")
+    # 2. Run Inference
+    with torch.no_grad():
+        outputs = model(**inputs)
+        logits = outputs.logits
 
-            # Safe extraction
-            score_0 = float(probs[0]) 
-            # If model only has 1 label, this prevents crash:
-            score_1 = float(probs[1]) if len(probs) > 1 else 0.0
+    # 3. Calculate Confidence
+    probs = F.softmax(logits, dim=1)
+    confidence, predicted_id = torch.max(probs, dim=1)
+    
+    # 4. Format Response
+    verdict = LABELS[predicted_id.item()]
+    confidence_score = confidence.item()
 
-            # Map results (Standard: 0=Fake, 1=Real)
-            # If your model is inverted, we will see it in the logs
-            if score_1 > score_0:
-                label = "Real"
-                confidence = score_1
-            else:
-                label = "Fake"
-                confidence = score_0
+    print(f"🔍 Analyzed: '{claim}' vs Evidence -> Verdict: {verdict} ({confidence_score:.1%})")
 
-        return {
-            "label": label,
-            "confidence": confidence * 100,
-            "raw_scores": {"LABEL_0": score_0, "LABEL_1": score_1}
+    return jsonify({
+        "verdict": verdict,
+        "confidence": f"{confidence_score:.1%}",
+        # Optional: Send raw scores if you want to show a bar chart on frontend
+        "details": {
+            "trusted_score": f"{probs[0][0]:.4f}",
+            "neutral_score": f"{probs[0][1]:.4f}",
+            "fake_score": f"{probs[0][2]:.4f}"
         }
+    })
 
-    except Exception as e:
-        # 🚨 This prints the ACTUAL error to your terminal
-        print(f"❌ CRITICAL ERROR: {repr(e)}")
-        import traceback
-        traceback.print_exc()
-        return {"label": "ERROR", "confidence": 0, "error": str(e)}
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+if __name__ == '__main__':
+    # Run on port 5000
+    app.run(port=5000, debug=True)
