@@ -33,20 +33,18 @@ LABELS = ["TRUSTED", "NEUTRAL", "FAKE"]
 # ============================================================
 # 🔌 API ENDPOINT
 # ============================================================
-@app.route('/predict', methods=['POST'])
-def predict():
+@app.route('/predict_text', methods=['POST'])
+def predict_text():
     data = request.json
-    claim = data.get('claim')
-    evidence = data.get('evidence')
+    text = data.get('text', '')
 
     # Basic Validation
-    if not claim or not evidence:
-        return jsonify({"error": "Please provide both a claim and evidence."}), 400
+    if not text:
+        return jsonify({"error": "Please provide text."}), 400
 
     # 1. Prepare Inputs for the AI
     inputs = tokenizer(
-        claim, 
-        evidence, 
+        text, 
         return_tensors="pt", 
         truncation=True, 
         max_length=512
@@ -65,10 +63,11 @@ def predict():
     verdict = LABELS[predicted_id.item()]
     confidence_score = confidence.item()
 
-    print(f"🔍 Analyzed: '{claim}' vs Evidence -> Verdict: {verdict} ({confidence_score:.1%})")
+    print(f"🔍 Analyzed Text -> Verdict: {verdict} ({confidence_score:.1%})")
 
     return jsonify({
         "verdict": verdict,
+        "label": verdict,
         "confidence": f"{confidence_score:.1%}",
         # Optional: Send raw scores if you want to show a bar chart on frontend
         "details": {
@@ -79,5 +78,5 @@ def predict():
     })
 
 if __name__ == '__main__':
-    # Run on port 5000
-    app.run(port=5000, debug=True)
+    # Run on port 8000 to avoid macOS AirPlay conflict and match Node backend
+    app.run(port=8000, debug=True)
