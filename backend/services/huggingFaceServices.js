@@ -1,74 +1,111 @@
 import axios from "axios";
-import { extractTextFromLink } from "./textExtractor.js"; 
-import { exportTextFromPdf } from "./pdfService.js"; // ⬅️ Uncommented this!
+import { extractTextFromLink } from "./textExtractor.js";
+import { exportTextFromPdf } from "./pdfService.js";
 
-const LOCAL_AI_URL = "http://localhost:8000/predict_text";
+// ─── HF Inference API ────────────────────────────────────────────────────────
+// Uses the same facebook/bart-large-mnli model but via the free HF hosted API.
+// No local Flask server needed — works in any cloud environment.
+const HF_API_URL  = "https://api-inference.huggingface.co/models/facebook/bart-large-mnli";
+const HF_TOKEN    = process.env.HF_ACCESS_TOKEN;
+const CANDIDATE_LABELS = ["real news", "fake news", "satire"];
+const LABEL_MAP   = { "real news": "TRUSTED", "fake news": "FAKE", "satire": "SATIRE" };
+
+// Local Flask fallback — used automatically when HF_ACCESS_TOKEN is not set (local dev)
+const LOCAL_AI_URL = process.env.LOCAL_AI_URL || "http://localhost:8000/predict_text";
 
 /**
- * 🧹 Helper: Clean confidence score to number
+ * 🧹 Normalise confidence to a 0–100 number
  */
 function parseConfidence(rawScore) {
   if (!rawScore) return 0;
-  // Handle "98.5%", "0.98", or 98.5
-  let strScore = String(rawScore).replace('%', '');
-  let scoreNum = Number(strScore);
-  
-  // Normalize decimals (0.98 -> 98.0)
-  if (scoreNum <= 1 && scoreNum > 0) scoreNum = scoreNum * 100;
-  
+  let scoreNum = Number(String(rawScore).replace("%", ""));
+  if (scoreNum > 0 && scoreNum <= 1) scoreNum *= 100;
   return isNaN(scoreNum) ? 0 : scoreNum;
 }
 
 /**
- * 🧠 Helper: Talk to the Python AI Server
+ * 🧠 Query whichever AI backend is available.
+ *    - Production: HF Inference API (zero-shot, no GPU needed on our server)
+ *    - Local dev:  Flask server on localhost:8000
  */
-async function queryLocalAi(text) {
+async function queryAi(text) {
+  // ── Production path: HF Inference API ──────────────────────────────────────
+  if (HF_TOKEN) {
+    try {
+      console.log(`🧠 Sending ${text.length} chars to HF Inference API…`);
+      const { data } = await axios.post(
+        HF_API_URL,
+        { inputs: text, parameters: { candidate_labels: CANDIDATE_LABELS } },
+        {
+          headers: { Authorization: `Bearer ${HF_TOKEN}` },
+          timeout: 60000, // HF cold-starts can be slow
+        }
+      );
+      // data = { labels: [...], scores: [...] }  (sorted highest → lowest)
+      const topLabel = data.labels?.[0];
+      const topScore = data.scores?.[0] ?? 0;
+      return {
+        label:      LABEL_MAP[topLabel] ?? "UNCERTAIN",
+        confidence: (topScore * 100).toFixed(2),
+      };
+    } catch (err) {
+      console.error("❌ HF API Error:", err.message);
+      return { label: "UNCERTAIN", confidence: "0.00" };
+    }
+  }
+
+  // ── Local dev path: Flask server ────────────────────────────────────────────
   try {
-    console.log(`🧠 Sending ${text.length} chars to Local AI...`);
-    const response = await axios.post(LOCAL_AI_URL, { text });
-    return response.data;
-  } catch (error) {
-    console.error("❌ AI Service Error:", error.message);
-    return { label: "Uncertain", confidence: 0 };
+    console.log(`🧠 Sending ${text.length} chars to Local AI…`);
+    const { data } = await axios.post(LOCAL_AI_URL, { text }, { timeout: 30000 });
+    return { label: data.label ?? "UNCERTAIN", confidence: data.confidence ?? "0" };
+  } catch (err) {
+    console.error("❌ Local AI Error:", err.message);
+    return { label: "UNCERTAIN", confidence: "0.00" };
   }
 }
 
-/* ================= EXPORTED FUNCTIONS ================= */
+/* ═══════════════════════════════════════════════════════════════════════════ */
 
 export async function classifyFromLink(url) {
   try {
     console.log(`🌍 Scraping: ${url}`);
-    
-    // 1. Scrape
     let scrapedText = await extractTextFromLink(url);
 
-    // 🤡 2. CHECK FOR SATIRE FLAG
+    // 🚨 Known misinformation domain — skip ML entirely
+    if (scrapedText === "FAKE_DOMAIN_DETECTED") {
+      return {
+        success:    true,
+        label:      "FAKE",
+        confidence: "100.00",
+        snippet:    "This domain is on our known misinformation sources list. Treat content with extreme scepticism.",
+      };
+    }
+
+    // 🤡 Known satire domain — skip ML entirely
     if (scrapedText === "SATIRE_CONTENT_DETECTED") {
-        return {
-            success: true,
-            label: "SATIRE",
-            confidence: "100.00",
-            snippet: "This source is a known satire/comedy website. Content is fictional."
-        };
+      return {
+        success:    true,
+        label:      "SATIRE",
+        confidence: "100.00",
+        snippet:    "This source is a known satire/comedy website. Content is fictional.",
+      };
     }
 
-    // 3. Safety Check
     if (!scrapedText || scrapedText.length < 50) {
-      return { success: false, error: "Could not read text from website." };
+      return { success: false, error: "Could not read enough text from website." };
     }
 
-    // 4. Truncate (Don't crash server with huge text)
     if (scrapedText.length > 5000) scrapedText = scrapedText.slice(0, 5000);
 
-    // 5. Predict
-    const prediction = await queryLocalAi(scrapedText);
+    const prediction = await queryAi(scrapedText);
     const finalScore = parseConfidence(prediction.confidence);
 
     const finalResult = {
-      success: true,
-      label: prediction.label || "Uncertain",
-      confidence: finalScore.toFixed(2), 
-      snippet: scrapedText.slice(0, 200).replace(/\n/g, " ") + "..."
+      success:    true,
+      label:      prediction.label,
+      confidence: finalScore.toFixed(2),
+      snippet:    scrapedText.slice(0, 200).replace(/\n/g, " ") + "…",
     };
 
     console.log("🚀 BACKEND SENDING:", finalResult);
@@ -80,28 +117,25 @@ export async function classifyFromLink(url) {
   }
 }
 
-// 📄 RESTORED PDF FUNCTION
-export async function classifyFromPdf(path) {
-    try {
-        console.log(`📄 Analyzing PDF: ${path}`);
-        const text = await exportTextFromPdf(path);
-        
-        if (!text || text.trim().length < 10) throw new Error("PDF content is empty.");
-        
-        // Truncate huge PDFs
-        const cleanText = text.length > 5000 ? text.slice(0, 5000) : text;
-        
-        const prediction = await queryLocalAi(cleanText);
-        const finalScore = parseConfidence(prediction.confidence);
+export async function classifyFromPdf(filePath) {
+  try {
+    console.log(`📄 Analyzing PDF: ${filePath}`);
+    const text = await exportTextFromPdf(filePath);
 
-        return {
-            success: true,
-            label: prediction.label || "Uncertain",
-            confidence: finalScore.toFixed(2),
-            snippet: cleanText.slice(0, 150).replace(/\n/g, " ") + "..."
-        };
-    } catch (err) {
-        console.error("❌ classifyFromPdf Error:", err.message);
-        return { success: false, error: err.message };
-    }
+    if (!text || text.trim().length < 10) throw new Error("PDF content is empty.");
+
+    const cleanText = text.length > 5000 ? text.slice(0, 5000) : text;
+    const prediction = await queryAi(cleanText);
+    const finalScore = parseConfidence(prediction.confidence);
+
+    return {
+      success:    true,
+      label:      prediction.label,
+      confidence: finalScore.toFixed(2),
+      snippet:    cleanText.slice(0, 150).replace(/\n/g, " ") + "…",
+    };
+  } catch (err) {
+    console.error("❌ classifyFromPdf Error:", err.message);
+    return { success: false, error: err.message };
+  }
 }
