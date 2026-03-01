@@ -7,19 +7,54 @@ puppeteer.use(StealthPlugin());
 
 // 🤡 KNOWN SATIRE DOMAINS (Skip AI for these)
 const SATIRE_DOMAINS = [
-    'theonion.com', 
-    'babylonbee.com', 
-    'clickhole.com', 
-    'duffelblog.com', 
+    'theonion.com',
+    'babylonbee.com',
+    'clickhole.com',
+    'duffelblog.com',
     'waterfordwhispersnews.com',
     'reductress.com'
 ];
 
+// 🚨 KNOWN MISINFORMATION / CONSPIRACY DOMAINS
+// Sources: NewsGuard, MBFC, PolitiFact, Snopes domain lists
+const FAKE_DOMAINS = [
+    'theinteldrop.org',
+    'infowars.com',
+    'naturalnews.com',
+    'beforeitsnews.com',
+    'whatdoesitmean.com',
+    'worldnewsdailyreport.com',
+    'yournewswire.com',
+    'newspunch.com',
+    'thepeoplesvoice.tv',
+    'neonnettle.com',
+    'realnewsrightnow.com',
+    'empirenews.net',
+    'anonews.co',
+    'hangthebankers.com',
+    'veteranstoday.com',
+    'globalresearch.ca',
+    'activistpost.com',
+    'geopolitics.co',
+    'collective-evolution.com',
+    'disclose.tv',
+    'in5d.com',
+    'abcnews.com.co',
+    'usatoday.com.co',
+    'cbsnews.com.co',
+];
+
 export async function extractTextFromLink(url) {
-    // 1. SATIRE CHECK
+    // 1. FAKE DOMAIN CHECK (highest priority — known misinformation outlets)
+    if (FAKE_DOMAINS.some(domain => url.includes(domain))) {
+        console.log("🚨 Detected known misinformation domain.");
+        return "FAKE_DOMAIN_DETECTED";
+    }
+
+    // 2. SATIRE CHECK
     if (SATIRE_DOMAINS.some(domain => url.includes(domain))) {
         console.log("🤡 Detected known Satire/Parody site.");
-        return "SATIRE_CONTENT_DETECTED"; 
+        return "SATIRE_CONTENT_DETECTED";
     }
 
     // 2. WIKIPEDIA CHECK (Fast Path)
@@ -45,7 +80,14 @@ async function scrapeWithPuppeteer(url) {
     try {
         browser = await puppeteer.launch({
             headless: "new",
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',   // avoids /dev/shm OOM in Docker/Render
+                '--disable-gpu',             // no GPU in cloud containers
+                '--no-zygote',               // reduces crashes in low-memory envs
+                '--single-process',          // Render free tier has 512 MB
+            ],
         });
 
         const page = await browser.newPage();
